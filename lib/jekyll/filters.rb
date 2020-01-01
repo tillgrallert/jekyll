@@ -1,18 +1,33 @@
-require 'uri'
-require 'json'
-require 'date'
+# frozen_string_literal: true
+
+require_all "jekyll/filters"
 
 module Jekyll
   module Filters
+    include URLFilters
+    include GroupingFilters
+    include DateFilters
+
     # Convert a Markdown string into HTML output.
     #
     # input - The Markdown String to convert.
     #
     # Returns the HTML formatted String.
     def markdownify(input)
-      site = @context.registers[:site]
-      converter = site.find_converter_instance(Jekyll::Converters::Markdown)
-      converter.convert(input)
+      @context.registers[:site].find_converter_instance(
+        Jekyll::Converters::Markdown
+      ).convert(input.to_s)
+    end
+
+    # Convert quotes into smart quotes.
+    #
+    # input - The String to convert.
+    #
+    # Returns the smart-quotified String.
+    def smartify(input)
+      @context.registers[:site].find_converter_instance(
+        Jekyll::Converters::SmartyPants
+      ).convert(input.to_s)
     end
 
     # Convert a Sass string into CSS output.
@@ -21,9 +36,9 @@ module Jekyll
     #
     # Returns the CSS formatted String.
     def sassify(input)
-      site = @context.registers[:site]
-      converter = site.find_converter_instance(Jekyll::Converters::Sass)
-      converter.convert(input)
+      @context.registers[:site].find_converter_instance(
+        Jekyll::Converters::Sass
+      ).convert(input)
     end
 
     # Convert a Scss string into CSS output.
@@ -32,9 +47,9 @@ module Jekyll
     #
     # Returns the CSS formatted String.
     def scssify(input)
-      site = @context.registers[:site]
-      converter = site.find_converter_instance(Jekyll::Converters::Scss)
-      converter.convert(input)
+      @context.registers[:site].find_converter_instance(
+        Jekyll::Converters::Scss
+      ).convert(input)
     end
 
     # Slugify a filename or title.
@@ -44,54 +59,8 @@ module Jekyll
     #
     # Returns the given filename or title as a lowercase URL String.
     # See Utils.slugify for more detail.
-    def slugify(input, mode=nil)
-      Utils.slugify(input, mode)
-    end
-
-    # Format a date in short format e.g. "27 Jan 2011".
-    #
-    # date - the Time to format.
-    #
-    # Returns the formatting String.
-    def date_to_string(date)
-      time(date).strftime("%d %b %Y")
-    end
-
-    # Format a date in long format e.g. "27 January 2011".
-    #
-    # date - The Time to format.
-    #
-    # Returns the formatted String.
-    def date_to_long_string(date)
-      time(date).strftime("%d %B %Y")
-    end
-
-    # Format a date for use in XML.
-    #
-    # date - The Time to format.
-    #
-    # Examples
-    #
-    #   date_to_xmlschema(Time.now)
-    #   # => "2011-04-24T20:34:46+08:00"
-    #
-    # Returns the formatted String.
-    def date_to_xmlschema(date)
-      time(date).xmlschema
-    end
-
-    # Format a date according to RFC-822
-    #
-    # date - The Time to format.
-    #
-    # Examples
-    #
-    #   date_to_rfc822(Time.now)
-    #   # => "Sun, 24 Apr 2011 12:34:46 +0000"
-    #
-    # Returns the formatted String.
-    def date_to_rfc822(date)
-      time(date).rfc822
+    def slugify(input, mode = nil)
+      Utils.slugify(input, :mode => mode)
     end
 
     # XML escape a string for use. Replaces any special characters with
@@ -106,7 +75,7 @@ module Jekyll
     #
     # Returns the escaped String.
     def xml_escape(input)
-      CGI.escapeHTML(input.to_s)
+      input.to_s.encode(:xml => :attr).gsub(%r!\A"|"\Z!, "")
     end
 
     # CGI escape a string for use in a URL. Replaces any special characters
@@ -121,7 +90,7 @@ module Jekyll
     #
     # Returns the escaped String.
     def cgi_escape(input)
-      CGI::escape(input)
+      CGI.escape(input)
     end
 
     # URI escape a string.
@@ -135,7 +104,16 @@ module Jekyll
     #
     # Returns the escaped String.
     def uri_escape(input)
-      URI.escape(input)
+      Addressable::URI.normalize_component(input)
+    end
+
+    # Replace any whitespace in the input string with a single space
+    #
+    # input - The String on which to operate.
+    #
+    # Returns the formatted String
+    def normalize_whitespace(input)
+      input.to_s.gsub(%r!\s+!, " ").strip
     end
 
     # Count the number of words in the input string.
@@ -151,6 +129,7 @@ module Jekyll
     # word "and" for the last one.
     #
     # array - The Array of Strings to join.
+    # connector - Word used to connect the last 2 items in the array
     #
     # Examples
     #
@@ -158,8 +137,7 @@ module Jekyll
     #   # => "apples, oranges, and grapes"
     #
     # Returns the formatted String.
-    def array_to_sentence_string(array)
-      connector = "and"
+    def array_to_sentence_string(array, connector = "and")
       case array.length
       when 0
         ""
@@ -168,7 +146,7 @@ module Jekyll
       when 2
         "#{array[0]} #{connector} #{array[1]}"
       else
-        "#{array[0...-1].join(', ')}, #{connector} #{array[-1]}"
+        "#{array[0...-1].join(", ")}, #{connector} #{array[-1]}"
       end
     end
 
@@ -181,37 +159,67 @@ module Jekyll
       as_liquid(input).to_json
     end
 
-    # Group an array of items by a property
-    #
-    # input - the inputted Enumerable
-    # property - the property
-    #
-    # Returns an array of Hashes, each looking something like this:
-    #  {"name"  => "larry"
-    #   "items" => [...] } # all the items where `property` == "larry"
-    def group_by(input, property)
-      if groupable?(input)
-        input.group_by do |item|
-          item_property(item, property).to_s
-        end.inject([]) do |memo, i|
-          memo << {"name" => i.first, "items" => i.last}
-        end
-      else
-        input
-      end
-    end
-
     # Filter an array of objects
     #
-    # input - the object array
-    # property - property within each object to filter by
-    # value - desired value
+    # input    - the object array.
+    # property - the property within each object to filter by.
+    # value    - the desired value.
+    #            Cannot be an instance of Array nor Hash since calling #to_s on them returns
+    #            their `#inspect` string object.
     #
     # Returns the filtered array of objects
     def where(input, property, value)
-      return input unless input.is_a?(Enumerable)
-      input = input.values if input.is_a?(Hash)
-      input.select { |object| item_property(object, property) == value }
+      return input if !property || value.is_a?(Array) || value.is_a?(Hash)
+      return input unless input.respond_to?(:select)
+
+      input    = input.values if input.is_a?(Hash)
+      input_id = input.hash
+
+      # implement a hash based on method parameters to cache the end-result
+      # for given parameters.
+      @where_filter_cache ||= {}
+      @where_filter_cache[input_id] ||= {}
+      @where_filter_cache[input_id][property] ||= {}
+
+      # stash or retrive results to return
+      @where_filter_cache[input_id][property][value] ||= begin
+        input.select do |object|
+          compare_property_vs_target(item_property(object, property), value)
+        end.to_a
+      end
+    end
+
+    # Filters an array of objects against an expression
+    #
+    # input - the object array
+    # variable - the variable to assign each item to in the expression
+    # expression - a Liquid comparison expression passed in as a string
+    #
+    # Returns the filtered array of objects
+    def where_exp(input, variable, expression)
+      return input unless input.respond_to?(:select)
+
+      input = input.values if input.is_a?(Hash) # FIXME
+
+      condition = parse_condition(expression)
+      @context.stack do
+        input.select do |object|
+          @context[variable] = object
+          condition.evaluate(@context)
+        end
+      end || []
+    end
+
+    # Convert the input into integer
+    #
+    # input - the object string
+    #
+    # Returns the integer value
+    def to_integer(input)
+      return 1 if input == true
+      return 0 if input == false
+
+      input.to_i
     end
 
     # Sort an array of objects
@@ -222,63 +230,67 @@ module Jekyll
     #
     # Returns the filtered array of objects
     def sort(input, property = nil, nils = "first")
-      if input.nil?
-          raise ArgumentError.new("Cannot sort a null object.")
-      end
+      raise ArgumentError, "Cannot sort a null object." if input.nil?
+
       if property.nil?
         input.sort
       else
-        case
-        when nils == "first"
+        if nils == "first"
           order = - 1
-        when nils == "last"
+        elsif nils == "last"
           order = + 1
         else
-          raise ArgumentError.new("Invalid nils order: " +
-            "'#{nils}' is not a valid nils order. It must be 'first' or 'last'.")
+          raise ArgumentError, "Invalid nils order: " \
+            "'#{nils}' is not a valid nils order. It must be 'first' or 'last'."
         end
 
-        input.sort { |apple, orange|
-          apple_property = item_property(apple, property)
-          orange_property = item_property(orange, property)
-
-          if !apple_property.nil? && orange_property.nil?
-            - order
-          elsif apple_property.nil? && !orange_property.nil?
-            + order
-          else
-            apple_property <=> orange_property
-          end
-        }
+        sort_input(input, property, order)
       end
     end
 
-    def pop(array, input = 1)
+    def pop(array, num = 1)
       return array unless array.is_a?(Array)
+
+      num = Liquid::Utils.to_integer(num)
       new_ary = array.dup
-      new_ary.pop(input.to_i || 1)
+      new_ary.pop(num)
       new_ary
     end
 
     def push(array, input)
       return array unless array.is_a?(Array)
+
       new_ary = array.dup
       new_ary.push(input)
       new_ary
     end
 
-    def shift(array, input = 1)
+    def shift(array, num = 1)
       return array unless array.is_a?(Array)
+
+      num = Liquid::Utils.to_integer(num)
       new_ary = array.dup
-      new_ary.shift(input.to_i || 1)
+      new_ary.shift(num)
       new_ary
     end
 
     def unshift(array, input)
       return array unless array.is_a?(Array)
+
       new_ary = array.dup
       new_ary.unshift(input)
       new_ary
+    end
+
+    def sample(input, num = 1)
+      return input unless input.respond_to?(:sample)
+
+      num = Liquid::Utils.to_integer(num) rescue 1
+      if num == 1
+        input.sample
+      else
+        input.sample(num)
+      end
     end
 
     # Convert an object into its String representation for debugging
@@ -287,38 +299,86 @@ module Jekyll
     #
     # Returns a String representation of the object.
     def inspect(input)
-      CGI.escapeHTML(input.inspect)
+      xml_escape(input.inspect)
     end
 
     private
-    def time(input)
-      case input
-      when Time
-        input
-      when Date
-        input.to_time
-      when String
-        Time.parse(input) rescue Time.at(input.to_i)
-      when Numeric
-        Time.at(input)
-      else
-        Jekyll.logger.error "Invalid Date:", "'#{input}' is not a valid datetime."
-        exit(1)
-      end.localtime
+
+    # Sort the input Enumerable by the given property.
+    # If the property doesn't exist, return the sort order respective of
+    # which item doesn't have the property.
+    # We also utilize the Schwartzian transform to make this more efficient.
+    def sort_input(input, property, order)
+      input.map { |item| [item_property(item, property), item] }
+        .sort! do |a_info, b_info|
+          a_property = a_info.first
+          b_property = b_info.first
+
+          if !a_property.nil? && b_property.nil?
+            - order
+          elsif a_property.nil? && !b_property.nil?
+            + order
+          else
+            a_property <=> b_property || a_property.to_s <=> b_property.to_s
+          end
+        end
+        .map!(&:last)
     end
 
-    def groupable?(element)
-      element.respond_to?(:group_by)
+    # `where` filter helper
+    #
+    # rubocop:disable Metrics/CyclomaticComplexity
+    # rubocop:disable Metrics/PerceivedComplexity
+    def compare_property_vs_target(property, target)
+      case target
+      when NilClass
+        return true if property.nil?
+      when Liquid::Expression::MethodLiteral # `empty` or `blank`
+        target = target.to_s
+        return true if property == target || Array(property).join == target
+      else
+        target = target.to_s
+        if property.is_a? String
+          return true if property == target
+        else
+          Array(property).each do |prop|
+            return true if prop.to_s == target
+          end
+        end
+      end
+
+      false
     end
+    # rubocop:enable Metrics/CyclomaticComplexity
+    # rubocop:enable Metrics/PerceivedComplexity
 
     def item_property(item, property)
-      if item.respond_to?(:to_liquid)
-        item.to_liquid[property.to_s]
-      elsif item.respond_to?(:data)
-        item.data[property.to_s]
-      else
-        item[property.to_s]
+      @item_property_cache ||= {}
+      @item_property_cache[property] ||= {}
+      @item_property_cache[property][item] ||= begin
+        if item.respond_to?(:to_liquid)
+          property.to_s.split(".").reduce(item.to_liquid) do |subvalue, attribute|
+            parse_sort_input(subvalue[attribute])
+          end
+        elsif item.respond_to?(:data)
+          parse_sort_input(item.data[property.to_s])
+        else
+          parse_sort_input(item[property.to_s])
+        end
       end
+    end
+
+    FLOAT_LIKE   = %r!\A\s*-?(?:\d+\.?\d*|\.\d+)\s*\Z!.freeze
+    INTEGER_LIKE = %r!\A\s*-?\d+\s*\Z!.freeze
+    private_constant :FLOAT_LIKE, :INTEGER_LIKE
+
+    # return numeric values as numbers for proper sorting
+    def parse_sort_input(property)
+      stringified = property.to_s
+      return property.to_i if INTEGER_LIKE.match?(stringified)
+      return property.to_f if FLOAT_LIKE.match?(stringified)
+
+      property
     end
 
     def as_liquid(item)
@@ -327,7 +387,7 @@ module Jekyll
         pairs = item.map { |k, v| as_liquid([k, v]) }
         Hash[pairs]
       when Array
-        item.map{ |i| as_liquid(i) }
+        item.map { |i| as_liquid(i) }
       else
         if item.respond_to?(:to_liquid)
           liquidated = item.to_liquid
@@ -342,5 +402,53 @@ module Jekyll
         end
       end
     end
+
+    # -----------   The following set of code was *adapted* from Liquid::If
+    # -----------   ref: https://git.io/vp6K6
+
+    # Parse a string to a Liquid Condition
+    def parse_condition(exp)
+      parser    = Liquid::Parser.new(exp)
+      condition = parse_binary_comparison(parser)
+
+      parser.consume(:end_of_string)
+      condition
+    end
+
+    # Generate a Liquid::Condition object from a Liquid::Parser object additionally processing
+    # the parsed expression based on whether the expression consists of binary operations with
+    # Liquid operators `and` or `or`
+    #
+    #  - parser: an instance of Liquid::Parser
+    #
+    # Returns an instance of Liquid::Condition
+    def parse_binary_comparison(parser)
+      parse_comparison(parser).tap do |condition|
+        binary_operator = parser.id?("and") || parser.id?("or")
+        condition.send(binary_operator, parse_comparison(parser)) if binary_operator
+      end
+    end
+
+    # Generates a Liquid::Condition object from a Liquid::Parser object based on whether the parsed
+    # expression involves a "comparison" operator (e.g. <, ==, >, !=, etc)
+    #
+    #  - parser: an instance of Liquid::Parser
+    #
+    # Returns an instance of Liquid::Condition
+    def parse_comparison(parser)
+      left_operand = Liquid::Expression.parse(parser.expression)
+      operator     = parser.consume?(:comparison)
+
+      # No comparison-operator detected. Initialize a Liquid::Condition using only left operand
+      return Liquid::Condition.new(left_operand) unless operator
+
+      # Parse what remained after extracting the left operand and the `:comparison` operator
+      # and initialize a Liquid::Condition object using the operands and the comparison-operator
+      Liquid::Condition.new(left_operand, operator, Liquid::Expression.parse(parser.expression))
+    end
   end
 end
+
+Liquid::Template.register_filter(
+  Jekyll::Filters
+)

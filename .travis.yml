@@ -1,30 +1,58 @@
-language: ruby
+bundler_args: --without benchmark:development
+script: script/cibuild
 cache: bundler
-sudo: false
+language: ruby
+
 rvm:
-- 2.2
-- 2.1
-- 2.0
-- jruby-9.0.0.0
+  - &ruby1 2.7.0
+  - &ruby2 2.5.7
+  - &jruby jruby-9.2.9.0
+
 matrix:
-  allow_failures:
-    - rvm: jruby-9.0.0.0
+  include:
+    - rvm: *ruby1
+      env: TEST_SUITE=fmt
+      name: "🤖️ Code Format"
+    - rvm: *ruby1
+      env: TEST_SUITE=default-site
+      name: "🏠️ Default Site"
+    - rvm: *ruby1
+      env: TEST_SUITE=profile-docs
+      name: "Profile Docs"
+    - rvm: *ruby1
+      env: TEST_SUITE=memprof
+      name: "Profile Memory Allocation"
+  exclude:
+    - rvm: *jruby
+      env: TEST_SUITE=cucumber
+
 env:
   matrix:
     - TEST_SUITE=test
     - TEST_SUITE=cucumber
-before_script: bundle update
-script: script/cibuild
+branches:
+  only:
+    - master
+    - themes
+    - /.*-stable/
+
+before_script:
+  - curl -L https://codeclimate.com/downloads/test-reporter/test-reporter-latest-linux-amd64 > ./cc-test-reporter
+  - chmod +x ./cc-test-reporter
+  - ./cc-test-reporter before-build
+
+after_script:
+  - ./cc-test-reporter after-build --exit-code $TRAVIS_TEST_RESULT
+
 notifications:
-  irc:
-    on_success: change
-    on_failure: change
-    channels:
-      - irc.freenode.org#jekyll
-    template:
-      - "%{repository}#%{build_number} (%{branch}) %{message} %{build_url}"
-  email:
-    on_success: never
-    on_failure: never
+  email: false
   slack:
-    secure: dNdKk6nahNURIUbO3ULhA09/vTEQjK0fNbgjVjeYPEvROHgQBP1cIP3AJy8aWs8rl5Yyow4YGEilNRzKPz18AsFptVXofpwyqcBxaCfmHP809NX5PHBaadydveLm+TNVao2XeLXSWu+HUNAYO1AanCUbJSEyJTju347xCBGzESU=
+    secure: "\
+      dNdKk6nahNURIUbO3ULhA09/vTEQjK0fNbgjVjeYPEvROHgQBP1cIP3AJy8aWs8rl5Yyow4Y\
+      GEilNRzKPz18AsFptVXofpwyqcBxaCfmHP809NX5PHBaadydveLm+TNVao2XeLXSWu+HUNAY\
+      O1AanCUbJSEyJTju347xCBGzESU=\
+    "
+
+before_install:
+  - gem update --system --no-document
+  - gem install bundler --no-document
